@@ -60,7 +60,7 @@ AC_PROG_DOXYGEN
 dnl Add your module here to have it grouped into a package
 
 ACI_PACKAGE([coreapps],[core application set],
-               [testharness hub switch messenger
+               [testharness hub switch switchqos messenger
                	#add coreapps component here
 		],
                [yes])

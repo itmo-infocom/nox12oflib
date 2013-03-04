@@ -81,7 +81,7 @@ struct Hash_mac_source
     }
 };
 
-Vlog_module log("switch");
+Vlog_module log("switchqos");
 
 class Switch
     : public Component 
@@ -104,6 +104,8 @@ private:
     /* Set up a flow when we know the destination of a packet?  This should
      * ordinarily be true; it is only usefully false for debugging purposes. */
     bool setup_flows;
+    void mod_flow_table(uint8_t table_id, ofl_msg_packet_in* &in, const Ofp_msg_event& pi, bool& setup_flows, uint32_t& in_port, int& out_port, uint8_t *eth_src, uint8_t *eth_dst, uint16_t tcp_dst, int set_queue);
+
 };
 
 void 
@@ -124,6 +126,67 @@ Switch::configure(const Configuration* conf) {
 void
 Switch::install() {
 
+}
+
+void
+Switch::mod_flow_table(uint8_t table_id, ofl_msg_packet_in* &in, const Ofp_msg_event& pi, bool& setup_flows, uint32_t& in_port, int& out_port, uint8_t *eth_src, uint8_t *eth_dst, uint16_t tcp_dst, int set_queue)
+{
+    /* Set up a flow if the output port is known. */
+    if (setup_flows && out_port != -1) {
+        
+	Flow  f;
+	f.Add_Field("in_port", in_port);
+	f.Add_Field("eth_src", eth_src);
+	f.Add_Field("eth_dst",eth_dst);
+	//f.Add_Field("tcp_dst",tcp_dst);
+	Actions *acts = new Actions();
+
+        if (set_queue) {
+//	    f.Add_Field("tcp_dst",tcp_dst);
+
+            //if (in_port == 1 || out_port == 1) {
+            //if (in_port == 1) {
+            if (tcp_dst == 5001) {
+printf("CreateSetQueue(1)\n");
+		acts->CreateSetQueue(1);
+	    } else {
+/*
+            //if (in_port == 2 || out_port == 2) {
+            if (in_port == 2) {
+            //if (tcp_dst == 5002) {
+*/
+printf("CreateSetQueue(2)\n");
+		acts->CreateSetQueue(2);
+	    }
+        }
+
+        acts->CreateOutput(out_port);
+
+        Instruction *inst =  new Instruction();
+        inst->CreateApply(acts);
+
+        FlowMod *mod = new FlowMod(0x00ULL,0x00ULL, table_id, OFPFC_ADD, 1, OFP_FLOW_PERMANENT, OFP_DEFAULT_PRIORITY,in->buffer_id, 
+                                    OFPP_ANY, OFPG_ANY, ofd_flow_mod_flags());
+        mod->AddMatch(&f.match);
+	mod->AddInstructions(inst);
+
+        send_openflow_msg(pi.dpid, (struct ofl_msg_header *)&mod->fm_msg, 0/*xid*/, true/*block*/);
+    }
+    /* Send out packet if necessary. */
+    if (!setup_flows || out_port == -1 || in->buffer_id == UINT32_MAX) {
+        if (in->buffer_id == UINT32_MAX) {
+            if (in->total_len != in->data_length) {
+                /* Control path didn't buffer the packet and didn't send us
+                 * the whole thing--what gives? */
+                VLOG_DBG(log, "total_len=%"PRIu16" data_len=%zu\n",
+                        in->total_len, in->data_length);
+                return;
+            }
+            send_openflow_pkt(pi.dpid, Nonowning_buffer(in->data, in->data_length), in_port, out_port == -1 ? OFPP_FLOOD : out_port, true/*block*/);
+        } else {
+            send_openflow_pkt(pi.dpid, in->buffer_id, in_port, out_port == -1 ? OFPP_FLOOD : out_port, true/*block*/);
+        }
+    }
 }
 
 Disposition
@@ -176,53 +239,28 @@ Switch::handle(const Event& e)
         }
     }
 		
-    /* Set up a flow if the output port is known. */
-    if (setup_flows && out_port != -1) {
-        
-	Flow  f;
-	f.Add_Field("in_port", in_port);
-	f.Add_Field("eth_src", eth_src);
-	f.Add_Field("eth_dst",eth_dst);
-	Actions *acts = new Actions();
-
-        if (in_port == 1 || out_port == 1) {
-        //if (in_port == 1) {
-		acts->CreateSetQueue(1);
-	}
-
-        //if (in_port == 2 || out_port == 2) {
-        if (in_port == 2) {
-		acts->CreateSetQueue(2);
-	}
-
-
-        acts->CreateOutput(out_port);
-
-        Instruction *inst =  new Instruction();
-        inst->CreateApply(acts);
-
-        FlowMod *mod = new FlowMod(0x00ULL,0x00ULL, 0,OFPFC_ADD, 1, OFP_FLOW_PERMANENT, OFP_DEFAULT_PRIORITY,in->buffer_id, 
-                                    OFPP_ANY, OFPG_ANY, ofd_flow_mod_flags());
-        mod->AddMatch(&f.match);
-	mod->AddInstructions(inst);
-
-        send_openflow_msg(pi.dpid, (struct ofl_msg_header *)&mod->fm_msg, 0/*xid*/, true/*block*/);
-    }
-    /* Send out packet if necessary. */
-    if (!setup_flows || out_port == -1 || in->buffer_id == UINT32_MAX) {
-        if (in->buffer_id == UINT32_MAX) {
-            if (in->total_len != in->data_length) {
-                /* Control path didn't buffer the packet and didn't send us
-                 * the whole thing--what gives? */
-                VLOG_DBG(log, "total_len=%"PRIu16" data_len=%zu\n",
-                        in->total_len, in->data_length);
-                return CONTINUE;
-            }
-            send_openflow_pkt(pi.dpid, Nonowning_buffer(in->data, in->data_length), in_port, out_port == -1 ? OFPP_FLOOD : out_port, true/*block*/);
-        } else {
-            send_openflow_pkt(pi.dpid, in->buffer_id, in_port, out_port == -1 ? OFPP_FLOOD : out_port, true/*block*/);
-        }
-    }
+    uint16_t tcp_src;
+    flow->get_Field<uint16_t>("tcp_src",&tcp_src);
+    tcp_src = ntohs(tcp_src);
+    uint16_t tcp_dst;
+    flow->get_Field<uint16_t>("tcp_dst",&tcp_dst);
+    tcp_dst = ntohs(tcp_dst);
+/*
+    uint16_t udp_src;
+    flow->get_Field<uint16_t>("udp_src",&udp_src);
+    uint16_t udp_dst;
+    flow->get_Field<uint16_t>("udp_dst",&udp_dst);
+*/
+/*
+printf("tcp_dst=%d\n",tcp_dst);
+    if (tcp_dst != 65535) {
+        //mod_flow_table(0, in, pi, setup_flows, in_port, out_port, eth_src, eth_dst, tcp_dst, 1);
+        mod_flow_table(0, in, pi, setup_flows, in_port, out_port, eth_src, eth_dst, tcp_dst, 0);
+    } else {
+        mod_flow_table(0, in, pi, setup_flows, in_port, out_port, eth_src, eth_dst, tcp_dst, 0);
+    } 
+*/
+    mod_flow_table(0, in, pi, setup_flows, in_port, out_port, eth_src, eth_dst, tcp_dst, 0);
     return CONTINUE;
 }
 

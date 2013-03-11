@@ -1,0 +1,10 @@
+#!/bin/sh
+
+ofdatapath -v -i eth1,eth2 punix:/var/run/s1.sock > /tmp/s1-ofd.log 2>&1 &
+ofprotocol unix:/var/run/s1.sock tcp:127.0.0.1:6633 > /tmp/s1-ofp.log 2>&1 &
+
+dpctl unix:/var/run/s1.sock queue-mod 1 1 3
+dpctl unix:/var/run/s1.sock queue-mod 1 2 500
+dpctl unix:/var/run/s1.sock queue-mod 2 1 3
+dpctl unix:/var/run/s1.sock queue-mod 2 2 500
+

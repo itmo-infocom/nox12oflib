@@ -1,7 +1,12 @@
 #!/usr/bin/python
 
 from mininet.node import *
-from mininet.topo import Topo, Node
+from mininet.log import setLogLevel, info, error
+from mininet.net import Mininet
+from mininet.topo import Topo, LinearTopo, Node
+from mininet.topolib import TreeTopo
+from mininet.util import createLink
+from mininet.cli import CLI
 
 
 class UserSwitchQoS( UserSwitch ):
@@ -106,6 +111,7 @@ class LinearTestTopo( Topo ):
         self.add_edge( hosts[ 0 ], switches[ 0 ] )
         self.add_edge( hosts[ 1 ], switches[ N - 1 ] )
 
+        # Additional switch for loop topology
         self.add_node( N + 4, Node( is_switch=True ) )
         self.add_edge( N + 4, 2)
         self.add_edge( N + 4, N + 1)
@@ -125,56 +131,46 @@ def start(net):
             switch.updateMAC(i)
         #print switch.name + ": " + `switch.macs`
 
+def killall():
+    print "Killing ofprotocol ofdatapath nox_core"
+    os.system('killall ofprotocol ofdatapath nox_core 2> /dev/null')
 
-if __name__ == '__main__':
-    import time
-    import os.path
-    import os
-    import sys
 
-    from mininet.log import setLogLevel, info, error
-    from mininet.net import Mininet
-    from mininet.topo import LinearTopo
-    from mininet.topolib import TreeTopo
-    from mininet.util import createLink
+def test_setup():
 
-    from mininet.cli import CLI
-
-    #from mininet.util import dumpNodeConnections
-    import matplotlib
-
-    #setLogLevel( 'debug' )
-    setLogLevel( 'info' )
-
-    print "Killing ofprotocol ofdatapath"
-    os.system('killall ofprotocol ofdatapath')
+    killall()
 
     info( '*** Creating network\n' )
-    #net = Mininet( topo=TreeTopo( depth=1, fanout=2 ), switch=UserSwitchQoS, controller=RemoteController)
-    #net = Mininet( topo=TreeTopo( depth=1, fanout=3 ), switch=UserSwitchQoS, controller=RemoteController)
-    #net = Mininet( topo=TreeTopo( depth=2, fanout=3 ), switch=UserSwitchQoS, controller=RemoteController)
-    #net = Mininet( topo=LinearTopo( k=2 ), switch=UserSwitchQoS, controller=RemoteController)
     net = Mininet( topo=LinearTestTopo( 3 ), switch=UserSwitchQoS, controller=RemoteController)
 
     #dumpNodeConnections(net.hosts)
 
-#    switch = net.addSwitch('s5')
-#    net.switches[0].linkTo( switch )
-#    net.switches[1].linkTo( switch )
+    os.environ['NOX_CORE_DIR'] = '/usr/local/bin'
+    controller = net.addController(name='c0', controller=NOX, noxArgs='switchqos')
 
     import networkx
-    networkx.draw(net.topo.g)
+    #networkx.draw(net.topo.g)
     import pylab
     #pylab.show()
 
-    
-    #ni = net.topo.node_info[ net.topo.g.nodes[7]]
-    #ni = net.topo.node_info[7]
-    #ni.power_on = False
+    print "Starting 'ofdatapath -v -i eth1,eth2 punix:/var/run/s1.sock > /tmp/s1-ofd.log 2>&1 &'"
+    os.system('ofdatapath -v -i eth1,eth2 punix:/var/run/s1.sock > /tmp/s1-ofd.log 2>&1 &')
+    print "Starting 'ofprotocol unix:/var/run/s1.sock tcp:127.0.0.1:6633 > /tmp/s1-ofp.log 2>&1 &'"
+    os.system('ofprotocol unix:/var/run/s1.sock tcp:127.0.0.1:6633 > /tmp/s1-ofp.log 2>&1 &')
 
-    start(net)
-    #CLI( net )
-    #sys.exit()
+    while not os.path.exists('/var/run/s1.sock'):
+        time.sleep(1)
+
+    os.system('dpctl unix:/var/run/s1.sock queue-mod 1 1 3')
+    os.system('dpctl unix:/var/run/s1.sock queue-mod 1 2 500')
+    os.system('dpctl unix:/var/run/s1.sock queue-mod 2 1 3')
+    os.system('dpctl unix:/var/run/s1.sock queue-mod 2 2 500')
+
+
+    return(net)
+
+
+def test_topology(net):
 
     print "Testing network connectivity"
     #net.ping([net.hosts[0],net.hosts[1]])
@@ -212,38 +208,43 @@ if __name__ == '__main__':
     print "Testing bandwidth between h1 and h2"
     net.iperf(net.hosts)
 
-    CLI( net )
-    sys.exit()
+def test_qos():
+    import paramiko
 
-    print "Testing bandwidth between h3 and h4"
-    net.iperf(net.hosts)
-    #net.stop()
+    ssh=paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.connect("192.168.122.11",username="root",password="123456")
+    stdin, stdout, stderr = ssh.exec_command("/usr/local/bin/iscsi_test")
+
+    print stdout.read()
+
+    result = stderr.read()
+
+    if len(result):
+        print "Error: " + result
+
+if __name__ == '__main__':
+    import time
+    import os.path
+    import os
+    import sys
+
+    #from mininet.util import dumpNodeConnections
+    #import matplotlib
+
+    #setLogLevel( 'debug' )
+    setLogLevel( 'info' )
+
+    net = test_setup()
+
+    start(net)
+
+    test_qos()
+    test_topology(net)
 
     CLI( net )
     net.stop()
+    killall()
     sys.exit()
 
-    info('*** statQueue', switch.statQueue(), '\n')
-    info('*** setQueue(1,1,5)\n')
-    switch.setQueue(1,1,5)
-    info('*** getQueue(1)', switch.getQueue(1), '\n')
-    info('*** setQueue(3,1,5)\n')
-    switch.setQueue(3,1,5)
-    info('*** getQueue(3)', switch.getQueue(3), '\n')
-    info('*** setQueue(1,2,300)\n')
-    switch.setQueue(1,2,300)
-    info('*** getQueue(1)', switch.getQueue(1), '\n')
-    info('*** setQueue(2,1,30)\n')
-    switch.setQueue(2,1,30)
-    info('*** getQueue(2)', switch.getQueue(2), '\n')
-    info('*** setQueue(2,2,1000)\n')
-    switch.setQueue(2,2,1000)
-    info('*** getQueue(2)', switch.getQueue(2), '\n')
-    info('*** setQueue(3,2,1000)\n')
-    switch.setQueue(3,2,1000)
-    info('*** getQueue(3)', switch.getQueue(3), '\n')
-    info('*** statQueue', switch.statQueue(), '\n')
-
-    CLI( net )
-    net.stop()
 

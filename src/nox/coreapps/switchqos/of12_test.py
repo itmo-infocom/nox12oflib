@@ -161,41 +161,28 @@ def test_setup():
     while not os.path.exists('/var/run/s1.sock'):
         time.sleep(1)
 
-    os.system('dpctl unix:/var/run/s1.sock queue-mod 1 1 3')
-    os.system('dpctl unix:/var/run/s1.sock queue-mod 1 2 500')
-    os.system('dpctl unix:/var/run/s1.sock queue-mod 2 1 3')
-    os.system('dpctl unix:/var/run/s1.sock queue-mod 2 2 500')
-
-
     return(net)
-
 
 def test_topology(net):
 
     print "Testing network connectivity"
-    #net.ping([net.hosts[0],net.hosts[1]])
     net.pingAll()
 
     print "Stopping of " + net.switches[3].name
     net.configLinkStatus(net.switches[3].name, net.switches[0].name, 'down')
     net.configLinkStatus(net.switches[3].name, net.switches[2].name, 'down')
-    #net.switches[3].stop()
-    #time.sleep(30)
     net.hosts[0].cmd("ping -w 15 10.0.0.6")
     net.pingAll()
     print "Testing bandwidth between h1 and h2"
     net.iperf(net.hosts)
     print "Stopping of " + net.switches[1].name
-    #net.switches[1].stop()
     net.configLinkStatus(net.switches[1].name, net.switches[0].name, 'down')
     net.configLinkStatus(net.switches[1].name, net.switches[2].name, 'down')
-    #time.sleep(30)
     net.hosts[0].cmd("ping -w 15 10.0.0.6")
     net.pingAll()
     print "Starting of " + net.switches[3].name
     net.configLinkStatus(net.switches[3].name, net.switches[0].name, 'up')
     net.configLinkStatus(net.switches[3].name, net.switches[2].name, 'up')
-    #time.sleep(30)
     net.hosts[0].cmd("ping -w 15 10.0.0.6")
     net.pingAll()
     print "Testing bandwidth between h1 and h2"
@@ -208,20 +195,88 @@ def test_topology(net):
     print "Testing bandwidth between h1 and h2"
     net.iperf(net.hosts)
 
-def test_qos():
-    import paramiko
 
+import paramiko
+
+def traf_server_start(host):
     ssh=paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect("192.168.122.11",username="root",password="123456")
-    stdin, stdout, stderr = ssh.exec_command("/usr/local/bin/iscsi_test")
+    ssh.connect(host, username="openflow", password="openflow")
+    stdin, stdout, stderr = ssh.exec_command("iperf -s")
+
+    print stderr.read()
+
+def traf_stop(host):
+    ssh=paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.connect(host, username="openflow", password="openflow")
+    stdin, stdout, stderr = ssh.exec_command("killall iperf")
+
+def traf_client(hosts, hostc):
+    ssh_c=paramiko.SSHClient()
+    ssh_c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh_c.connect(hostc, username="openflow", password="openflow")
+    stdin, stdout, stderr = ssh_c.exec_command("iperf -t 9999 -c " + hosts)
 
     print stdout.read()
+    print stderr.read()
 
-    result = stderr.read()
+def io_test(host):
+    ssh=paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.connect(host, username="openflow", password="openflow")
+    stdin, stdout, stderr = ssh.exec_command("sudo /usr/local/bin/iscsi_test")
 
-    if len(result):
-        print "Error: " + result
+    #print stdout.read()
+    print "Disk I/O perf: "
+    #print stderr.read().splitlines()[1]
+    print stderr.read()
+
+def qos_setup(iscsi, traf):
+    print "QoS: iSCSI=%d IPERF=%d" % (iscsi, traf)
+    os.system('dpctl unix:/var/run/s1.sock queue-mod 1 1 %d >> /tmp/s1-queue.log' % iscsi)
+    os.system('dpctl unix:/var/run/s1.sock queue-mod 1 2 %d >> /tmp/s1-queue.log' % traf)
+    os.system('dpctl unix:/var/run/s1.sock queue-mod 2 1 %d >> /tmp/s1-queue.log' % iscsi)
+    os.system('dpctl unix:/var/run/s1.sock queue-mod 2 2 %d >> /tmp/s1-queue.log' % traf)
+
+
+def test_qos():
+    from multiprocessing import Process
+
+    paramiko.util.log_to_file('/tmp/paramiko.log')
+
+    s1 = Process(target=traf_server_start, args=('10.10.10.102',))
+    s1.start()
+    s2 = Process(target=traf_server_start, args=('10.10.10.104',))
+    s2.start()
+    time.sleep(15)
+    c1 = Process(target=traf_client, args=('10.10.10.102','10.10.10.104'))
+    c1.start()
+    #c2 = Process(target=traf_client, args=('10.10.10.104','10.10.10.102'))
+    #c2.start()
+
+    qos_setup(1000, 3)
+    io_test('192.168.122.11')
+
+    qos_setup(1000, 1000)
+    io_test('192.168.122.11')
+
+    qos_setup(3, 3)
+    io_test('192.168.122.11')
+
+    qos_setup(3, 1000)
+    io_test('192.168.122.11')
+
+    traf_stop('10.10.10.104')
+    traf_stop('10.10.10.102')
+
+    c1.join()
+    c1.terminate()
+    #c2.join()
+    #c2.terminate()
+    s1.terminate()
+    s2.terminate()
+
 
 if __name__ == '__main__':
     import time

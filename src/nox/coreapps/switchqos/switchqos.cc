@@ -179,12 +179,18 @@ Switch::handle(const Event& e)
 
     /* Set up a flow if the output port is known. */
     if (setup_flows && out_port != -1) {
-        uint16_t tcp_src;
-        flow->get_Field<uint16_t>("tcp_src",&tcp_src);
-        tcp_src = ntohs(tcp_src);
-        uint16_t tcp_dst;
-        flow->get_Field<uint16_t>("tcp_dst",&tcp_dst);
-        tcp_dst = ntohs(tcp_dst);
+        
+        uint8_t ip_proto;
+        flow->get_Field<uint8_t>("ip_proto",&ip_proto);
+//VLOG_DBG(log,"%d",ip_proto);
+        bool is_tcp = (ip_proto == 6);
+
+        uint16_t port_src;
+        flow->get_Field<uint16_t>(is_tcp ? "tcp_src" : "udp_src",&port_src);
+        port_src = ntohs(port_src);
+        uint16_t port_dst;
+        flow->get_Field<uint16_t>(is_tcp ? "tcp_dst" : "udp_dst",&port_dst);
+        port_dst = ntohs(port_dst);
 
         uint16_t eth_type;
         flow->get_Field<uint16_t>("eth_type",&eth_type);
@@ -192,8 +198,7 @@ Switch::handle(const Event& e)
 printf("eth_type=0x%x(ntohs - 0x%x, htons - 0x%x)\n",eth_type,ntohs(eth_type),htons(eth_type));
 //printf("eth_type=0x%x(0x%x)\n",eth_type,htons(eth_type));
 
-        uint8_t ip_proto;
-        flow->get_Field<uint8_t>("ip_proto",&ip_proto);
+        
         uint32_t ipv4_src;
         flow->get_Field<uint32_t>("ipv4_src",&ipv4_src);
         uint32_t ipv4_dst;
@@ -203,44 +208,72 @@ printf("eth_type=0x%x(ntohs - 0x%x, htons - 0x%x)\n",eth_type,ntohs(eth_type),ht
 	f.Add_Field("in_port", in_port);
 	f.Add_Field("eth_src", eth_src);
 	f.Add_Field("eth_dst",eth_dst);
+    
+    
+
 	Actions *acts = new Actions();
+    FlowMod *mod =
+ new FlowMod(0x00ULL,0x00ULL, 0,OFPFC_ADD, 1, OFP_FLOW_PERMANENT, OFP_DEFAULT_PRIORITY,in->buffer_id, 
+                                    OFPP_ANY, OFPG_ANY, ofd_flow_mod_flags());
 
         if (eth_type == 0x800) {
-
-            //if (in_port == 1 || out_port == 1) {
-            //if (in_port == 1) {
-            if (tcp_dst == 5001) {
-printf("CreateSetQueue(1)\n");
-            f.Add_Field("tcp_dst",tcp_dst);
-            f.Add_Field("eth_type",eth_type);
-            f.Add_Field("ip_proto",ip_proto);
-            //f.Add_Field("ipv4_src",ipv4_src);
-            //f.Add_Field("ipv4_dst",ipv4_dst);
-
+	    /* SiPP */
+            /* signalization */
+            if (!is_tcp && port_dst == 5060 ) {
+                printf("CreateSetQueue(1)\n");
+		f.Add_Field("eth_type",eth_type);
+   		f.Add_Field("ip_proto",ip_proto);
+                f.Add_Field("udp_dst",5060);
+                mod->AddMatch(&f.match);
                 acts->CreateSetQueue(1);
-           }
- else if (tcp_dst == 3260) {
-printf("CreateSetQueue(2)\n");
-            f.Add_Field("tcp_dst",tcp_dst);
-            f.Add_Field("eth_type",eth_type);
-            f.Add_Field("ip_proto",ip_proto);
-            //f.Add_Field("ipv4_src",ipv4_src);
-            //f.Add_Field("ipv4_dst",ipv4_dst);
-                acts->CreateSetQueue(2);
             }
+	    /*rtp*/
+	    else if (!is_tcp && port_dst == 6000 ) {
+                printf("CreateSetQueue(1)\n");
+		f.Add_Field("eth_type",eth_type);
+   		f.Add_Field("ip_proto",ip_proto);
+                f.Add_Field("udp_dst",6000);
+                mod->AddMatch(&f.match);
+                acts->CreateSetQueue(1);
+            }
+	    else if (!is_tcp && port_dst == 6002 ) {
+                printf("CreateSetQueue(1)\n");
+		f.Add_Field("eth_type",eth_type);
+   		f.Add_Field("ip_proto",ip_proto);
+                f.Add_Field("udp_dst",6002);
+                mod->AddMatch(&f.match);
+                acts->CreateSetQueue(1);
+            }
+	    /*iscsi*/
+            else if (is_tcp && port_dst == 3260) {
+                printf("CreateSetQueue(2)\n");
+                f.Add_Field("tcp_dst",port_dst);
+		f.Add_Field("eth_type",eth_type);
+                f.Add_Field("ip_proto",ip_proto);
+		mod->AddMatch(&f.match); 
+		acts->CreateSetQueue(2);
+            }
+	    /*iperf*/
+	    else if (is_tcp && port_dst == 5001) {
+                
+		printf("CreateSetQueue(3)\n");
+                f.Add_Field("tcp_dst",port_dst);
+		f.Add_Field("eth_type",eth_type);
+                f.Add_Field("ip_proto",ip_proto);
+		mod->AddMatch(&f.match);
+                acts->CreateSetQueue(3);
+            }
+	    else	
+		mod->AddMatch(&f.match);
         }
+	else
+	    mod->AddMatch(&f.match);
 
 
         acts->CreateOutput(out_port);
-
         Instruction *inst =  new Instruction();
         inst->CreateApply(acts);
-
-        FlowMod *mod =
- new FlowMod(0x00ULL,0x00ULL, 0,OFPFC_ADD, 1, OFP_FLOW_PERMANENT, OFP_DEFAULT_PRIORITY,in->buffer_id, 
-                                    OFPP_ANY, OFPG_ANY, ofd_flow_mod_flags());
-        mod->AddMatch(&f.match);
-	mod->AddInstructions(inst);
+	    mod->AddInstructions(inst);
 
         send_openflow_msg(pi.dpid, (struct ofl_msg_header *)&mod->fm_msg, 0/*xid*/, true/*block*/);
     }

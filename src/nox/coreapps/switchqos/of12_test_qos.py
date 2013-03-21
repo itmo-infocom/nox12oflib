@@ -2,37 +2,36 @@
 
 import paramiko
 
-"""
-def traf_server_start(host,hosts):
+
+def iperf_server(host,hosts):
     ssh=get_ssh(host)
     stdin, stdout, stderr = ssh.exec_command("iperf -s")
     print stderr.read()
 
-def traf_stop(host):
-    ssh=get_ssh(host)
-    stdin, stdout, stderr = ssh.exec_command("killall iperf")
-
-def traf_client(host, hosts, hostc):
+def iperf_client(host, hosts, hostc):
     ssh=get_ssh(host)
     stdin, stdout, stderr = ssh.exec_command("iperf -t 9999 -c " + hosts)
     print stdout.read()
     print stderr.read()
-"""
 
-def traf_server_start(host,hosts):
+def iperf_stop(host):
+    ssh=get_ssh(host)
+    stdin, stdout, stderr = ssh.exec_command("killall iperf")
+
+def sip_server(host,hosts):
     ssh=get_ssh(host)
     stdin, stdout, stderr = ssh.exec_command("cd sipp-3.3; ./sipp -sn uas -i " + hosts + " -bg > ~/sipp-serv.log 2>&1 &")
     print stderr.read()
 
-def traf_stop(host):
-    ssh=get_ssh(host)
-    stdin, stdout, stderr = ssh.exec_command("sudo killall sipp")
-
-def traf_client(host, hosts, hostc):
+def sip_client(host, hosts, hostc):
     ssh=get_ssh(host)
     stdin, stdout, stderr = ssh.exec_command("cd sipp-3.3; sudo ./sipp -sn uac_pcap " + hosts + " -i " + hostc + " -r 130 -rp 10s -bg > ~/sipp-cl.log 2>&1 &")
     print stdout.read()
     print stderr.read()
+
+def sip_stop(host):
+    ssh=get_ssh(host)
+    stdin, stdout, stderr = ssh.exec_command("sudo killall sipp")
 
 def killall():
     print "Killing ofprotocol ofdatapath nox_core"
@@ -73,12 +72,12 @@ def qos_setup(iscsi, traf):
     os.system('dpctl unix:/var/run/s1.sock queue-mod 1 3 %d >> /tmp/s1-queue.log' % traf)
     os.system('dpctl unix:/var/run/s1.sock queue-mod 2 3 %d >> /tmp/s1-queue.log' % traf)
 
-def single_qos_test(has_traf, iscsi, traf):
+def single_qos_test(iscsi, traf, traf_client, traf_stop):
     # starting everything
     from multiprocessing import Process
     os.system('ifconfig eth1 up; ifconfig eth2 up')
     test_setup()
-    if has_traf:
+    if traf:
         c1 = Process(target=traf_client, args=('192.168.122.13','10.10.10.102','10.10.10.104'))
         c1.start()
     time.sleep(3)
@@ -86,12 +85,23 @@ def single_qos_test(has_traf, iscsi, traf):
     io_test('192.168.122.11')
 
     # stopping everything
-    if has_traf:
+    if traf:
         traf_stop('192.168.122.13')
         c1.join()
         c1.terminate()
     killall()
     os.system('ifconfig eth1 down; ifconfig eth2 down')
+
+def traf_stop(host):
+    iperf_stop(host)
+    sip_stop(host)
+
+def qos_tests(traf_client,traf_stop):
+    single_qos_test(1000,0,traf_client,traf_stop)
+    single_qos_test(1,1000,traf_client,traf_stop)  
+    single_qos_test(1000,1,traf_client,traf_stop)
+    single_qos_test(1000,1000,traf_client,traf_stop)
+    single_qos_test(1,1,traf_client,traf_stop)
 
 if __name__ == '__main__':
     import time
@@ -105,26 +115,23 @@ if __name__ == '__main__':
     os.system('ifconfig eth1 down; ifconfig eth2 down')
     traf_stop('192.168.122.12')
     traf_stop('192.168.122.13')
-    s1 = Process(target=traf_server_start, args=('192.168.122.12','10.10.10.102'))
+
+    # IPERF test
+    s1 = Process(target=iperf_server, args=('192.168.122.12','10.10.10.102'))
     s1.start()
 
-    
-    #s2 = Process(target=traf_server_start, args=('192.168.122.13','10.10.10.104'))
-    #s2.start()
-    #c2 = Process(target=traf_client, args=('192.168.122.12','10.10.10.104','10.10.10.102'))
-    #c2.start()
-    #c2.join()
-    #c2.terminate()
-    #s2.terminate()
+    qos_tests(iperf_client, iperf_stop)
 
-    single_qos_test(False,1000,0)
-    time.sleep(15)  
-    single_qos_test(True,1,1000)  
-    single_qos_test(True,1000,1)
-    single_qos_test(True,1000,1000)
-    single_qos_test(True,1,1)
-
-    traf_stop('192.168.122.12')
-    traf_stop('192.168.122.13')
+    iperf_stop('192.168.122.12')
+    iperf_stop('192.168.122.13')
     s1.terminate()
 
+    # SIP test
+    s1 = Process(target=sip_server, args=('192.168.122.12','10.10.10.102'))
+    s1.start()
+
+    qos_tests(sip_client, sip_stop)
+
+    sip_stop('192.168.122.12')
+    sip_stop('192.168.122.13')
+    s1.terminate()

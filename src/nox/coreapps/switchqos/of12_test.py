@@ -2,7 +2,7 @@
 
 import paramiko
 
-
+"""
 def traf_server_start(host,hosts):
     ssh=get_ssh(host)
     stdin, stdout, stderr = ssh.exec_command("iperf -s")
@@ -18,6 +18,7 @@ def traf_client(host, hosts, hostc):
     print stdout.read()
     print stderr.read()
 """
+
 def traf_server_start(host,hosts):
     ssh=get_ssh(host)
     stdin, stdout, stderr = ssh.exec_command("cd sipp-3.3; ./sipp -sn uas -i " + hosts + " -bg > ~/sipp-serv.log 2>&1 &")
@@ -32,7 +33,7 @@ def traf_client(host, hosts, hostc):
     stdin, stdout, stderr = ssh.exec_command("cd sipp-3.3; sudo ./sipp -sn uac_pcap " + hosts + " -i " + hostc + " -r 130 -rp 10s -bg > ~/sipp-cl.log 2>&1 &")
     print stdout.read()
     print stderr.read()
-"""
+
 def killall():
     print "Killing ofprotocol ofdatapath nox_core"
     os.system('killall ofprotocol ofdatapath nox_core 2> /dev/null')
@@ -47,45 +48,6 @@ def test_setup():
 
     while not os.path.exists('/var/run/s1.sock'):
         time.sleep(1)
-
-
-def test_topology(net):
-
-    print "Testing network connectivity"
-    #net.ping([net.hosts[0],net.hosts[1]])
-    net.pingAll()
-
-    print "Stopping of " + net.switches[3].name
-    net.configLinkStatus(net.switches[3].name, net.switches[0].name, 'down')
-    net.configLinkStatus(net.switches[3].name, net.switches[2].name, 'down')
-    #net.switches[3].stop()
-    #time.sleep(30)
-    net.hosts[0].cmd("ping -w 15 10.0.0.6")
-    net.pingAll()
-    print "Testing bandwidth between h1 and h2"
-    net.iperf(net.hosts)
-    print "Stopping of " + net.switches[1].name
-    #net.switches[1].stop()
-    net.configLinkStatus(net.switches[1].name, net.switches[0].name, 'down')
-    net.configLinkStatus(net.switches[1].name, net.switches[2].name, 'down')
-    #time.sleep(30)
-    net.hosts[0].cmd("ping -w 15 10.0.0.6")
-    net.pingAll()
-    print "Starting of " + net.switches[3].name
-    net.configLinkStatus(net.switches[3].name, net.switches[0].name, 'up')
-    net.configLinkStatus(net.switches[3].name, net.switches[2].name, 'up')
-    #time.sleep(30)
-    net.hosts[0].cmd("ping -w 15 10.0.0.6")
-    net.pingAll()
-    print "Testing bandwidth between h1 and h2"
-    net.iperf(net.hosts)
-    print "Starting all switches"
-    net.configLinkStatus(net.switches[1].name, net.switches[0].name, 'up')
-    net.configLinkStatus(net.switches[1].name, net.switches[2].name, 'up')
-    net.hosts[0].cmd("ping -w 15 10.0.0.6")
-    net.pingAll()
-    print "Testing bandwidth between h1 and h2"
-    net.iperf(net.hosts)
 
 def get_ssh(host):
     ssh=paramiko.SSHClient()
@@ -131,11 +93,15 @@ def single_qos_test(has_traf, iscsi, traf):
     killall()
     os.system('ifconfig eth1 down; ifconfig eth2 down')
 
-def test_qos():
+if __name__ == '__main__':
+    import time
+    import os.path
+    import os
+    import sys
     from multiprocessing import Process
 
+    killall()
     paramiko.util.log_to_file('/tmp/paramiko.log')
-
     os.system('ifconfig eth1 down; ifconfig eth2 down')
     traf_stop('192.168.122.12')
     traf_stop('192.168.122.13')
@@ -161,17 +127,4 @@ def test_qos():
     traf_stop('192.168.122.12')
     traf_stop('192.168.122.13')
     s1.terminate()
-    
-
-
-if __name__ == '__main__':
-    import time
-    import os.path
-    import os
-    import sys
-
-    killall()
-    #test_setup()
-    test_qos()
-    #killall()
 

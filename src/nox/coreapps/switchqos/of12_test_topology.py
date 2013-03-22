@@ -3,7 +3,7 @@
 from mininet.node import *
 from mininet.log import setLogLevel, info, error
 from mininet.net import Mininet
-from mininet.topo import Topo, LinearTopo, Node
+from mininet.topo import Topo, Node
 from mininet.topolib import TreeTopo
 from mininet.util import createLink
 from mininet.cli import CLI
@@ -85,13 +85,13 @@ class UserSwitchQoS( UserSwitch ):
             '.sock tcp:%s:%d' % ( controller.IP(), controller.port )+
             ' 1> ' + ofplog + ' 2>' + ofplog + ' &' ) 
 
-class LinearTestTopo( Topo ):
+class TestTopo( Topo ):
     "Topology for a string of 2 hosts and N switches."
 
     def __init__( self, N ):
 
         # Add default members to class.
-        super( LinearTestTopo, self ).__init__()
+        super( TestTopo, self ).__init__()
 
         # Create switch and host nodes
         hosts = ( 1, N + 3 )
@@ -119,6 +119,22 @@ class LinearTestTopo( Topo ):
         # Consider all switches and hosts 'on'
         self.enable_all()
 
+
+def setup():
+
+    info( '*** Creating network\n' )
+    net = Mininet( topo=TestTopo( 3 ), switch=UserSwitchQoS, controller=RemoteController)
+
+    os.environ['NOX_CORE_DIR'] = '/usr/local/bin'
+    controller = net.addController(name='c0', controller=NOX, noxArgs='switchqos')
+
+    #import networkx
+    #networkx.draw(net.topo.g)
+    #import pylab
+    #pylab.show()
+
+    return(net)
+
 def start(net):
     net.start()
 
@@ -131,23 +147,7 @@ def start(net):
             switch.updateMAC(i)
 
 
-def test_setup():
-
-    info( '*** Creating network\n' )
-    net = Mininet( topo=LinearTestTopo( 3 ), switch=UserSwitchQoS, controller=RemoteController)
-
-    os.environ['NOX_CORE_DIR'] = '/usr/local/bin'
-    controller = net.addController(name='c0', controller=NOX, noxArgs='switchqos')
-
-    #import networkx
-    #networkx.draw(net.topo.g)
-    #import pylab
-    #pylab.show()
-
-    return(net)
-
-
-def test_topology(net):
+def test(net):
 
     print "Testing network connectivity"
     net.pingAll()
@@ -183,11 +183,11 @@ if __name__ == '__main__':
     #setLogLevel( 'debug' )
     setLogLevel( 'info' )
 
-    net = test_setup()
+    net = setup()
 
     start(net)
 
-    test_topology(net)
+    test(net)
 
     CLI( net )
     net.stop()

@@ -1,11 +1,11 @@
- /*// us file is part of NOX.
+ /*// Switch NOX application with support of QoS for CPqD/of12softswitch.
  *
- * NOX is free software: you can redistribute it and/or modify
+ * It is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
- * NOX is distributed in the hope that it will be useful,
+ * SwitchQoS NOX is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
@@ -81,13 +81,13 @@ struct Hash_mac_source
     }
 };
 
-Vlog_module log("switch");
+Vlog_module log("switchqos");
 
-class Switch
+class SwitchQoS
     : public Component 
 {
 public:
-    Switch(const Context* c,
+    SwitchQoS(const Context* c,
            const json_object*) 
         : Component(c) { }
 
@@ -107,7 +107,7 @@ private:
 };
 
 void 
-Switch::configure(const Configuration* conf) {
+SwitchQoS::configure(const Configuration* conf) {
     setup_flows = true; // default value
     BOOST_FOREACH (const std::string& arg, conf->get_arguments()) {
         if (arg == "noflow") {
@@ -117,17 +117,17 @@ Switch::configure(const Configuration* conf) {
         }
     }
     
-    register_handler(Ofp_msg_event::get_name(OFPT_PACKET_IN), boost::bind(&Switch::handle, this, _1));
+    register_handler(Ofp_msg_event::get_name(OFPT_PACKET_IN), boost::bind(&SwitchQoS::handle, this, _1));
     
 }
 
 void
-Switch::install() {
+SwitchQoS::install() {
 
 }
 
 Disposition
-Switch::handle(const Event& e)
+SwitchQoS::handle(const Event& e)
 {
     const Ofp_msg_event& pi = assert_cast<const Ofp_msg_event&>(e);
 
@@ -179,26 +179,18 @@ Switch::handle(const Event& e)
 
     /* Set up a flow if the output port is known. */
     if (setup_flows && out_port != -1) {
-        
-        uint8_t ip_proto;
-        flow->get_Field<uint8_t>("ip_proto",&ip_proto);
-//VLOG_DBG(log,"%d",ip_proto);
-        bool is_tcp = (ip_proto == 6);
-
-        uint16_t port_src;
-        flow->get_Field<uint16_t>(is_tcp ? "tcp_src" : "udp_src",&port_src);
-        port_src = ntohs(port_src);
-        uint16_t port_dst;
-        flow->get_Field<uint16_t>(is_tcp ? "tcp_dst" : "udp_dst",&port_dst);
-        port_dst = ntohs(port_dst);
+        uint16_t tcp_src;
+        flow->get_Field<uint16_t>("tcp_src",&tcp_src);
+        tcp_src = ntohs(tcp_src);
+        uint16_t tcp_dst;
+        flow->get_Field<uint16_t>("tcp_dst",&tcp_dst);
+        tcp_dst = ntohs(tcp_dst);
 
         uint16_t eth_type;
         flow->get_Field<uint16_t>("eth_type",&eth_type);
-        //eth_type = ntohs(eth_type);
-printf("eth_type=0x%x(ntohs - 0x%x, htons - 0x%x)\n",eth_type,ntohs(eth_type),htons(eth_type));
-//printf("eth_type=0x%x(0x%x)\n",eth_type,htons(eth_type));
 
-        
+        uint8_t ip_proto;
+        flow->get_Field<uint8_t>("ip_proto",&ip_proto);
         uint32_t ipv4_src;
         flow->get_Field<uint32_t>("ipv4_src",&ipv4_src);
         uint32_t ipv4_dst;
@@ -208,72 +200,35 @@ printf("eth_type=0x%x(ntohs - 0x%x, htons - 0x%x)\n",eth_type,ntohs(eth_type),ht
 	f.Add_Field("in_port", in_port);
 	f.Add_Field("eth_src", eth_src);
 	f.Add_Field("eth_dst",eth_dst);
-    
-    
-
 	Actions *acts = new Actions();
-    FlowMod *mod =
- new FlowMod(0x00ULL,0x00ULL, 0,OFPFC_ADD, 1, OFP_FLOW_PERMANENT, OFP_DEFAULT_PRIORITY,in->buffer_id, 
-                                    OFPP_ANY, OFPG_ANY, ofd_flow_mod_flags());
 
         if (eth_type == 0x800) {
-	    /* SiPP */
-            /* signalization */
-            if (!is_tcp && port_dst == 5060 ) {
-                printf("CreateSetQueue(1)\n");
-		f.Add_Field("eth_type",eth_type);
-   		f.Add_Field("ip_proto",ip_proto);
-                f.Add_Field("udp_dst",5060);
-                mod->AddMatch(&f.match);
-                acts->CreateSetQueue(1);
-            }
-	    /*rtp*/
-	    else if (!is_tcp && port_dst == 6000 ) {
-                printf("CreateSetQueue(1)\n");
-		f.Add_Field("eth_type",eth_type);
-   		f.Add_Field("ip_proto",ip_proto);
-                f.Add_Field("udp_dst",6000);
-                mod->AddMatch(&f.match);
-                acts->CreateSetQueue(1);
-            }
-	    else if (!is_tcp && port_dst == 6002 ) {
-                printf("CreateSetQueue(1)\n");
-		f.Add_Field("eth_type",eth_type);
-   		f.Add_Field("ip_proto",ip_proto);
-                f.Add_Field("udp_dst",6002);
-                mod->AddMatch(&f.match);
-                acts->CreateSetQueue(1);
-            }
-	    /*iscsi*/
-            else if (is_tcp && port_dst == 3260) {
-                printf("CreateSetQueue(2)\n");
-                f.Add_Field("tcp_dst",port_dst);
-		f.Add_Field("eth_type",eth_type);
+
+            if (tcp_dst == 5001) {
+                f.Add_Field("tcp_dst",tcp_dst);
+                f.Add_Field("eth_type",eth_type);
                 f.Add_Field("ip_proto",ip_proto);
-		mod->AddMatch(&f.match); 
-		acts->CreateSetQueue(2);
-            }
-	    /*iperf*/
-	    else if (is_tcp && port_dst == 5001) {
-                
-		printf("CreateSetQueue(3)\n");
-                f.Add_Field("tcp_dst",port_dst);
-		f.Add_Field("eth_type",eth_type);
+
+                acts->CreateSetQueue(1);
+            } else if (tcp_dst == 3260) {
+                f.Add_Field("tcp_dst",tcp_dst);
+                f.Add_Field("eth_type",eth_type);
                 f.Add_Field("ip_proto",ip_proto);
-		mod->AddMatch(&f.match);
-                acts->CreateSetQueue(3);
+
+                acts->CreateSetQueue(2);
             }
-	    else	
-		mod->AddMatch(&f.match);
         }
-	else
-	    mod->AddMatch(&f.match);
 
 
         acts->CreateOutput(out_port);
+
         Instruction *inst =  new Instruction();
         inst->CreateApply(acts);
-	    mod->AddInstructions(inst);
+
+        FlowMod *mod = new FlowMod(0x00ULL,0x00ULL, 0,OFPFC_ADD, 1, OFP_FLOW_PERMANENT, OFP_DEFAULT_PRIORITY,in->buffer_id, 
+                                    OFPP_ANY, OFPG_ANY, ofd_flow_mod_flags());
+        mod->AddMatch(&f.match);
+	mod->AddInstructions(inst);
 
         send_openflow_msg(pi.dpid, (struct ofl_msg_header *)&mod->fm_msg, 0/*xid*/, true/*block*/);
     }
@@ -295,6 +250,6 @@ printf("eth_type=0x%x(ntohs - 0x%x, htons - 0x%x)\n",eth_type,ntohs(eth_type),ht
     return CONTINUE;
 }
 
-REGISTER_COMPONENT(container::Simple_component_factory<Switch>, Switch);
+REGISTER_COMPONENT(container::Simple_component_factory<SwitchQoS>, SwitchQoS);
 
 } // unnamed namespacennamed namespace
